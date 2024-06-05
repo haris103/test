@@ -1,0 +1,70 @@
+trigger:
+- master
+- support
+
+#Multi-configuration and multi-agent job options are not exported to YAML. Configure these options using documentation guidance: https://docs.microsoft.com/vsts/pipelines/process/phases
+
+pool:
+  name: Default
+  demands: msbuild
+
+variables:
+  Repository: 'Boylesports.Sportsbook'
+
+resources:
+  repositories:
+    - repository: Common
+      type: git
+      name: Boylesports/Common
+    - repository: ConfigFiles
+      type: git
+      name: Boylesports/ConfigFiles
+      ref: $(Repository)
+      trigger:
+        branches:
+          include:
+            - $(Repository)
+
+name: $(Date:yyyyMMdd)$(Rev:.r)
+stages:
+- stage: build
+  displayName: 'Build and Test'
+  jobs:
+  - job: 'Build'
+    steps:
+    - checkout: self
+    - checkout: Common
+    - checkout: ConfigFiles
+    - template: "Build/.NET4.8/Build.yml@Common"
+      parameters:
+        SolutionPath: '**/BoyleSports.SportsBook.sln'
+        ProjectPath: '*\Boylesports.Sportsbook\BoyleSports.SportsBook'
+        ConfigTransformSource: '$(System.DefaultWorkingDirectory)\ConfigFiles'
+        CommandArguments: '/p:TargetFramework=net472'
+    - template: "Build/.NET4.8/UnitTest.yml@Common"
+- stage: push
+  displayName: 'Push Package to Octopus Deploy'
+  dependsOn: build
+  condition: and(succeeded(), or(eq(variables['Build.SourceBranchName'], 'master'), eq(variables['Build.SourceBranchName'], 'main'), eq(variables['Build.SourceBranchName'], 'support'), eq(variables['Build.SourceBranchName'], 'International')))
+  jobs:
+  - job: 'Push'
+    steps:
+    - checkout: none
+    - template: "Build/Jobs/OctopusDeploy.yml@Common"
+      parameters:
+        OctoConnectedServiceName: 'Boylesports Octopus'
+        SpaceId: 'Spaces-1'
+        ProjectGroupId: 'ProjectGroups-101'
+        ProjectId: 'Projects-526'
+        PackageId: '$(Build.Repository.Name)'
+        PackageVersion: '$(Build.BuildNumber)-$(Build.SourceBranchName)'
+        #PackageVersion: '$(Build.BuildNumber)-$(BrandName)-$(Build.SourceBranchName)'
+        SourcePath: '$(System.DefaultWorkingDirectory)'
+        AdditionalArguments: '--package=$(Build.Repository.Name):$(Build.BuildNumber)-$(Build.SourceBranchName)'
+        #AdditionalArguments: '--tenant=$(BrandName) --package=$(Build.Repository.Name):$(Build.BuildNumber)-$(BrandName)-$(Build.SourceBranchName)'
+        ${{ if or(eq(variables['Build.SourceBranchName'], 'master'), eq(variables['Build.SourceBranchName'], 'main'), eq(variables['Build.SourceBranchName'], 'International')) }}:
+          ChannelId: 'Channels-683'
+          #EnvironmentId: 'Environments-82'
+        ${{ if eq(variables['Build.SourceBranchName'], 'support') }}:
+          ChannelId: 'Channels-662'
+          #EnvironmentId: 'Environments-5'
